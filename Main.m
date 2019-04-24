@@ -19,6 +19,25 @@ addpath('Functions')
 % ue
 
 %% Initial variables setup
+% Parameters:
+n = 12;
+T(n) = 41;
+% deltaTbpe_loss
+Tf = 35;
+Tol = 1e-4;
+% U(1)
+X(n) = 72;
+
+% Inputs:
+Ms = 12; 
+Ts = 74;
+Tsw = 25;
+Xf = 35;
+% Qextra_loss
+% deltaT_preheat_loss
+U_reduction = 0.963;
+
+% First case
 % n = 6; % Number of effects
 % Ts = 100; % ºC
 % Md = 1; % kg/s
@@ -29,79 +48,90 @@ addpath('Functions')
 % Tf = 35; % ºC
 % Tcw = 25; % ºC
 
-n = 12; % Number of effects
-Ts = 70; % ºC
-Md = 139; % kg/s
-Xf = 35000; % ppm or mg/kg
-X(n) = 72000; % ppm or mg/kg
-T(n) = 41; % ºC
-deltaT_loss = 0.2; % ºC
-Tf = 35; % ºC
-Tcw = 25; % ºC
+% Second case
+% n = 12; % Number of effects
+% Ts = 70; % ºC
+% Md = 139; % kg/s
+% Xf = 35000; % ppm or mg/kg
+% X(n) = 72000; % ppm or mg/kg
+% T(n) = 41; % ºC
+% deltaT_loss = 0.2; % ºC
+% Tf = 35; % ºC
+% Tcw = 25; % ºC
 
 %% Problem solving
-% Available values:
-hs_vap = latent_heat_water_evaporation(Ts); % enthalpy/mass released by the motive steam
 
-Tv(n) = T(n) - deltaT_loss; % Vapor temperature accounting for losses
-hv_vap(n) = latent_heat_water_evaporation(Tv(n)); % enthalpy/mass necessary to condensate the vapor on the nth effect
+% Initial guesses
+Md = 100;
+Mf = Md*2;
+D = ones(1,n)*Md/n;
 
-B(n) = (Xf/(X(n)-Xf))*Md; % Mass of brine released in the last efect
-Mf = Md + B(n); % Mass of feedwater necessary
-
-deltaT_total = Ts-T(n); % Overall temperature difference
-
-%% Heat transfer coefficients
-% U(1) = 2.4; % Initial Guess
-U(1) = ue(Ts);
-for i = 2:n
-    U(i) = 0.95*U(i-1);
-end
-
-%% Initial temperature profile
-deltaT(1) = deltaT_total/(U(1)*sum(1./U));
-for i = 2:n
-    deltaT(i) = deltaT(1)*U(1)/U(i);
-end
-
-% It should be noted that the temperature drop per effect increases as the
-% effect temperature is reduced, i.e., dT1 > dT2 > dT3 > dT4 > dT5 > dT6.
-% This is dictated by:
-% - Constant heat transfer area,
-% - Lower overall heat transfer coefficients at lower temperatures, and
-% - Constant thermal loads in all effects.
-% Therefore, the increase of the temperature drop at lower temperatures
-% compensates the decrease in the overall heat transfer coefficient.
-[D,B,X,T,Tv,hv_vap,A] = MED_equations(n,Md,Mf,Xf,U,deltaT,deltaT_loss,Ts);
-
-
-%% Convergence criteria
-iteration = 1;
-while max(abs(A(1:end-1)-A(2:end))) > 0.0001
-    disp(['Iteration ' num2str(iteration)])
-    Am = mean(A);
-    for i = 1:n
-        deltaT(i) = deltaT(i)*A(i)/Am;
+Areas = zeros(1,n);
+first_iteration = true;
+iter = 0;
+while first_iteration || (any(abs((A(2:n) - A(1:n-1))) > Tol) && any(abs((A - Areas)) > 1e-2))
+    if first_iteration
+        first_iteration = false;
+    else
+        Areas = A;
     end
     
-%     U(1) = ue(T(1));
-%     for i = 2:n
-%         U(i) = 0.95*U(i-1);
-%     end
     
-    [D,B,X,T,Tv,hv_vap,A] = MED_equations(n,Md,Mf,Xf,U,deltaT,deltaT_loss,Ts);
-    iteration = iteration + 1;
+    B(n) = (Xf/(X(n)-Xf))*Md; % Mass of brine released in the last efect
+
+    deltaT_total = Ts-T(n); % Overall temperature difference
+
+    %% Heat transfer coefficients
+    U(1) = ue(Ts);
+    for i = 2:n
+        U(i) = U_reduction*U(i-1);
+    end
+
+    %% Initial temperature profile
+    deltaT(1) = deltaT_total/(U(1)*sum(1./U));
+    for i = 2:n
+        deltaT(i) = deltaT(1)*U(1)/U(i);
+    end
+    
+    T(1) = Ts - deltaT(1);
+    for i = 2:n
+        T(i) = T(i-1) - deltaT(i);
+    end
+    
+    for i = 1:n
+        hv_vap(i) = latent_heat_water_evaporation(T(i));
+    end
+    
+    %% Distillate flow rate
+    Md = 0;
+    for i = 1:n
+        Md = Md + D(1)*hv_vap(1)/hv_vap(i);
+    end
+    
+    aux = 0;
+    for i = 1:n
+        aux = aux + hv_vap(1)/hv_vap(i);
+    end
+    D(1) = Md/aux;
+    
+    %% Brine flow rate
+    B(1) = Mf - D(1);
+    for i = 2:n
+        B(i) = B(i-1) - D(i);
+    end
+    
+    %% Salt concentration profile
+    X(1) = Xf*Mf/B(1);
+    for i = 2:n
+        X(i) = X(i-1)*B(i-1)/B(i);
+    end
+    
+    %% Areas calculation
+    for i = 1:n
+        deltaTbpe_loss = bpe(T(i),X(i));
+        A(i) = D(i)*hv_vap(i)/(U(i)*(deltaT(i)-deltaTbpe_loss));
+    end
+    iter = iter + 1;
+    disp(['Iteration ' num2str(iter)])
+    abs((A(2:n) - A(1:n-1)))
 end
-
-Ms = D(1)*hv_vap(1)/hs_vap;
-PR = Md/Ms;
-
-Qc = D(n)*hv_vap(n);
-LMTDc = (Tf-Tcw)/log((T(n)-deltaT_loss-Tcw)/(T(n)-deltaT_loss-Tf));
-Uc = uc(Tv(n));
-Ac = Qc/(Uc*LMTDc);
-
-sA = (sum(A)+Ac)/Md;
-
-Cp = 4.2;
-Mcw = D(n)*hv_vap(n)/(Cp*(Tf-Tcw)) - Mf;

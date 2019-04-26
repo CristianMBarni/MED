@@ -35,7 +35,7 @@ Tsw = 25;
 Xf = 35;
 % Qextra_loss
 % deltaT_preheat_loss
-U_reduction = 0.963;
+U_reduction = 0.95;
 
 % First case
 % n = 6; % Number of effects
@@ -62,24 +62,19 @@ U_reduction = 0.963;
 %% Problem solving
 
 % Initial guesses
-Md = 100;
+% Md = 100;
 Mf = Md*2;
-D = ones(1,n)*Md/n;
 
 Areas = zeros(1,n);
 first_iteration = true;
 iter = 0;
 while first_iteration || (any(abs((A(2:n) - A(1:n-1))) > Tol) && any(abs((A - Areas)) > 1e-2))
+    %% Iteration setup
     if first_iteration
         first_iteration = false;
     else
         Areas = A;
     end
-    
-    
-    B(n) = (Xf/(X(n)-Xf))*Md; % Mass of brine released in the last efect
-
-    deltaT_total = Ts-T(n); % Overall temperature difference
 
     %% Heat transfer coefficients
     U(1) = ue(Ts);
@@ -88,6 +83,8 @@ while first_iteration || (any(abs((A(2:n) - A(1:n-1))) > Tol) && any(abs((A - Ar
     end
 
     %% Initial temperature profile
+    deltaT_total = Ts-T(n); % Overall temperature difference
+    
     deltaT(1) = deltaT_total/(U(1)*sum(1./U));
     for i = 2:n
         deltaT(i) = deltaT(1)*U(1)/U(i);
@@ -103,6 +100,9 @@ while first_iteration || (any(abs((A(2:n) - A(1:n-1))) > Tol) && any(abs((A - Ar
     end
     
     %% Distillate flow rate
+    hs_vap = latent_heat_water_evaporation(Ts);
+    D(1) = Ms*hs_vap/hv_vap(1);
+    
     Md = 0;
     for i = 1:n
         Md = Md + D(1)*hv_vap(1)/hv_vap(i);
@@ -115,6 +115,9 @@ while first_iteration || (any(abs((A(2:n) - A(1:n-1))) > Tol) && any(abs((A - Ar
     D(1) = Md/aux;
     
     %% Brine flow rate
+    
+    B(n) = (Xf/(X(n)-Xf))*Md; % Mass of brine released in the last efect
+    
     B(1) = Mf - D(1);
     for i = 2:n
         B(i) = B(i-1) - D(i);

@@ -57,7 +57,7 @@ Ts_sat = 100; % Temperature of saturated motive steam
 Tv1 = 65; % Vapor temperature in the first effect
 Tvn = 40; % Vapor temperature in the last effect
 Tf_dc_out = 35; % Temperature of feedwater leaving the down condenser
-pre_Tsw_out = 37; % Temperature of the seawater leaving the plate HXT
+pre_Tsw_out = 80; % Temperature of the seawater leaving the plate HXT
 Tsw = 25; % Temperature of seawater
 Tv_Loss = 0.2; % Temperature losses by pressure losses (Heat transfer inside each effect is at Tv-Tv_loss)
 Xsw = 0.042; % Salinity of seawater in weight %
@@ -123,6 +123,8 @@ while(true)
     %%
     % Specific enthalpies difference between brine and feedwater in the 1st effect
     Hb_Tb(1) = swenthalpy(Tb(1),Pv(1),Xb(1));
+    Hf_Tf(1) = swenthalpy(pre_Tsw_out,Pv(1),Xb(1));
+    Delta_H_iph(1) = Hb_Tb(1) - Hf_Tf(1);
     
     % Calculate mass flow rate of feedwater into the 1st effect
     

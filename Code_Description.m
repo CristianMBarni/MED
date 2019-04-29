@@ -43,7 +43,7 @@ Xsw = 0.042; % Salinity of seawater in weight %
 Xb1 = 0.045; % Salinity in weight % to be assumed when starting iteration - Calculate mass flow rate of feedwater for the 1st effect
 Xbn_max = 0.07; % Maximum allowed salinity of the last effect
 
-%% Initial variables setup
+%% Simplified MED initial variables setup - JUST FOR REFERENCE
 % n = 6; % Number of effects
 % Ts = 100; % ºC
 % Md = 1; % kg/s
@@ -67,10 +67,63 @@ Xbn_max = 0.07; % Maximum allowed salinity of the last effect
 %% Problem solving
 
 % Some loop
-
+while(false)
     % Reset salinity of first effect
     Xb(1) = Xb1;
 
     % Set temperature & pressure profiles
     T(1:n) = something;
     P(1:n) = something;
+    
+    if TVC_is_present
+        % Calculate TVC and more...
+    else
+        % Calculate power available for 1st effect
+        % Set temperature profile across feedwater preheaters
+        % Calculate feedwater input into the 1st effect (all effects for PF)
+        
+        if MED_FF
+            if Salinity_profile_is_correct
+                if NCG_is_present
+                    % Calculate NCG and more...
+                else
+                    % Calculate internal operation of each effect
+                    % Calculate the down-condenser
+                    % Calculate the flat plate feedwater preheaters
+                    
+                    if enough_vapor_powering_down_condenser
+                        if too_much_vapor_powering_down_condenser
+                            if MED_FF_low_temp
+                                Xb1 = Xb1 - 0.001;
+                                continue
+                            elseif MED_FF_TVC
+                                
+                            end
+                        else
+                            % END OF PROGRAM
+                            break
+                        end
+                    else
+                        Xb1 = Xb1 - 0.001;
+                        continue
+                    end
+                    
+                end
+            else
+                if any(Xb(1:end-1) <= Xb(2:end))
+                    Xb1 = Xb1 - 0.001;
+                elseif mass_distillate_flashing < 0
+                    Xb1 = Xb1 + 0.001;
+                end
+                continue
+            end
+                
+        elseif MED_PF
+            
+        end
+    end
+end
+
+
+% Calculate the auxiliary pumping system
+% Print outputs

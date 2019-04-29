@@ -1,5 +1,6 @@
 function [P] = P_sat_water_vapor(T)
 
+% P is pressure in kPa
 % T is temperature in ºC
 % Range between 5-200ºC with 0.05% error from steam table values
 
@@ -17,8 +18,8 @@ f(8) = -0.000521868;
 
 aux = 0;
 for i = 1:8
-    aux = aux + f(i)*(0.01*(T +273.15 -338.15))^(i-1);
+    aux = aux + f(i).*(0.01.*(T +273.15 -338.15)).^(i-1);
 end
 
-P = Pc*exp((Tc/(T+273.15)-1)*aux);
+P = Pc*exp((Tc./(T+273.15)-1).*aux);
 end

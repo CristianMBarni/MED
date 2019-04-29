@@ -63,7 +63,7 @@ U_reduction = 0.95;
 
 % Initial guesses
 % Md = 100;
-% Mf = Md*2;
+Mf = Md*2;
 
 Areas = zeros(1,n);
 first_iteration = true;
@@ -103,23 +103,20 @@ while first_iteration || (any(abs((A(2:n) - A(1:n-1))) > Tol) && any(abs((A - Ar
     hs_vap = latent_heat_water_evaporation(Ts);
     D(1) = Ms*hs_vap/hv_vap(1);
     
+    Md = 0;
     for i = 1:n
-        D(i) = D(1)*hv_vap(1)/hv_vap(i);
+        Md = Md + D(1)*hv_vap(1)/hv_vap(i);
     end
     
-    Md = sum(D);
-%     aux = 0;
-%     for i = 1:n
-%         aux = aux + hv_vap(1)/hv_vap(i);
-%     end
-%     D(1) = Md/aux;
+    aux = 0;
+    for i = 1:n
+        aux = aux + hv_vap(1)/hv_vap(i);
+    end
+    D(1) = Md/aux;
     
     %% Brine flow rate
     
     B(n) = (Xf/(X(n)-Xf))*Md; % Mass of brine released in the last efect
-    hb_vap(n) = latent_heat_water_evaporation(T(n));
-    
-    Mf = B(n)*hb_vap(n)/hv_vap(1);
     
     B(1) = Mf - D(1);
     for i = 2:n
@@ -139,5 +136,5 @@ while first_iteration || (any(abs((A(2:n) - A(1:n-1))) > Tol) && any(abs((A - Ar
     end
     iter = iter + 1;
     disp(['Iteration ' num2str(iter)])
-    abs((A(2:n) - A(1:n-1)));
+    abs((A(2:n) - A(1:n-1)))
 end

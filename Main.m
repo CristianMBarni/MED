@@ -62,13 +62,12 @@ U_reduction = 0.95;
 %% Problem solving
 
 % Initial guesses
-% Md = 100;
-Mf = Md*2;
+Mf = 50;
 
 Areas = zeros(1,n);
 first_iteration = true;
 iter = 0;
-while first_iteration || (any(abs((A(2:n) - A(1:n-1))) > Tol) && any(abs((A - Areas)) > 1e-2))
+while first_iteration || (any(abs((A(2:n) - A(1:n-1))) > Tol) || any(abs((A - Areas)) > 1e-2))
     %% Iteration setup
     if first_iteration
         first_iteration = false;
@@ -114,6 +113,10 @@ while first_iteration || (any(abs((A(2:n) - A(1:n-1))) > Tol) && any(abs((A - Ar
     end
     D(1) = Md/aux;
     
+    for i = 2:n
+        D(i) = D(1)*hv_vap(1)/hv_vap(i);
+    end
+    
     %% Brine flow rate
     
     B(n) = (Xf/(X(n)-Xf))*Md; % Mass of brine released in the last efect
@@ -138,3 +141,42 @@ while first_iteration || (any(abs((A(2:n) - A(1:n-1))) > Tol) && any(abs((A - Ar
     disp(['Iteration ' num2str(iter)])
     abs((A(2:n) - A(1:n-1)))
 end
+
+%%
+B(n) = Xf/(X(n)-Xf)*Md;
+
+for i = 2:n
+    Q(i) = Q(1);
+end
+
+deltaT_total = Ts - T(n);
+deltaT(1) = deltaT_total/(U(1)*sum(1./U));
+for i = 2:n
+    deltaT(i) = deltaT(1)*U(1)/U(i);
+    T(i) = T(i-1) - deltaT(i);
+end
+
+j = 0;
+D1 = 12;
+D(1) = 1;
+while abs(D1-D(1)) > 1e-3
+    D1 = D(1);
+    for i = 2:n
+        D(i) = D(1)*hv_vap(1)/hv_vap(i);
+    end
+    Md = 0;
+    for i = 1:n
+        Md = Md + D(i)*hv_vap(1)/hv_vap(i);
+    end
+    D(1) = Md/sum(hv_vap(1)./hv_vap(1:n));
+    j = j + 1;
+end
+
+B(1) = Mf - D(1);
+for i = 2:n
+    B(i) = B(i-1) - D(i);
+end
+
+X(i) = X(i-1)*B(i-1)/B(i);
+
+A(i) = D(i)*hv_vap(i)/(U(i)*(deltaT(i) - deltaTbpe_loss));

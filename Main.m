@@ -59,17 +59,22 @@ Tf_dc_out = 35; % Temperature of feedwater leaving the down condenser
 pre_Tsw_out = 30; % Temperature of the seawater leaving the plate HXT
 Tsw = 25; % Temperature of seawater
 Tv_Loss = 0.2; % Temperature losses by pressure losses (Heat transfer inside each effect is at Tv-Tv_loss)
-Xsw = 0.042; % Salinity of seawater in weight %
-Xb1 = Xsw+0.003; % Salinity in weight % to be assumed when starting iteration - Calculate mass flow rate of feedwater for the 1st effect
-Xbn_max = 0.072; % Maximum allowed salinity of the last effect
+% Xsw = 0.042; % Salinity of seawater in weight %
+% Xb1 = Xsw+0.003; % Salinity in weight % to be assumed when starting iteration - Calculate mass flow rate of feedwater for the 1st effect
+% Xbn_max = 0.072; % Maximum allowed salinity of the last effect
+
+Xsw = 42000; % Salinity of seawater in mg/kg
+Xb1 = Xsw + 3000; % Salinity in mg/kg to be assumed when starting iteration - Calculate mass flow rate of feedwater for the 1st effect
+Xbn_max = 72000; % Maximum allowed salinity of the last effect
 
 % NEEDS REVIEW - El Dessouky, 4.3.2 - last sentence
 GOR_guess = 0.98*n; % GOR is aproximately equal to the number of effects
 Md = GOR_guess*Ms; % Equation invented randomly, needs reviewing
 D = 0;
-
+tic
 %% Problem solving
 while abs(Md - sum(D)) > 1e-4
+%     tic
     if sum(D) ~= 0
         Md = sum(D);
     end
@@ -129,8 +134,8 @@ while abs(Md - sum(D)) > 1e-4
     
     %%
     % Specific enthalpies difference between brine and feedwater in the 1st effect
-    Hb_Tb(1) = swenthalpy(Tb(1),Pv(1),Xb(1));
-    Hf_Tf(1) = swenthalpy(pre_Tsw_out,Pv(1),Xb(1));
+    Hb_Tb(1) = seawater_enthalpy(Tb(1),Pv(1),Xb(1));
+    Hf_Tf(1) = seawater_enthalpy(pre_Tsw_out,Pv(1),Xb(1));
     Delta_H_iph(1) = Hb_Tb(1) - Hf_Tf(1);
     
     % NEEDS REVIEW
@@ -152,6 +157,8 @@ while abs(Md - sum(D)) > 1e-4
     %     end
     
     %% Calculate effects
+%     toc
+%     tic
     for i = 1:n
         % Calculate Xb(i)
         LHv_evap(i) = latent_heat_water_evaporation(Tv(i));
@@ -160,8 +167,8 @@ while abs(Md - sum(D)) > 1e-4
             Q(i) = (Qv_remain_out(i-1) + Qd_flash(i))*(1-Q_Loss);
             Xb(i) = Xb(i-1);
             
-            Hb_Tb(i) = swenthalpy(Tb(i),Pv(i),Xb(i));
-            Hf_Tf(i) = swenthalpy(pre_Tsw_out,Pv(i),Xb(i));
+            Hb_Tb(i) = seawater_enthalpy(Tb(i),Pv(i),Xb(i));
+            Hf_Tf(i) = seawater_enthalpy(pre_Tsw_out,Pv(i),Xb(i));
             Delta_H_iph(i) = Hb_Tb(i) - Hf_Tf(i);
         end
         
@@ -171,16 +178,16 @@ while abs(Md - sum(D)) > 1e-4
             if Xb(i) > Xbn_max
                 error(['Brine salinity got bigger than the maximum allowed on effect ' num2str(i)])
             end
-            Hb_Tb(i) = swenthalpy(Tb(i),Pv(i),Xb(i));
-            Hf_Tf(i) = swenthalpy(pre_Tsw_out,Pv(i),Xb(i));
+            Hb_Tb(i) = seawater_enthalpy(Tb(i),Pv(i),Xb(i));
+            Hf_Tf(i) = seawater_enthalpy(pre_Tsw_out,Pv(i),Xb(i));
             Delta_H_iph(i) = Hb_Tb(i) - Hf_Tf(i);
             Q_iter = F(i)*(Delta_H_iph(i) + LHv_evap(i)*(Xb(i)-Xsw)/Xb(i)); % Heat load = (heating feed + evaporating)
         end
         
         while Q(i) < Q_iter
             Xb(i) = Xb(i) - Xb1*0.00001;
-            Hb_Tb(i) = swenthalpy(Tb(i),Pv(i),Xb(i));
-            Hf_Tf(i) = swenthalpy(pre_Tsw_out,Pv(i),Xb(i));
+            Hb_Tb(i) = seawater_enthalpy(Tb(i),Pv(i),Xb(i));
+            Hf_Tf(i) = seawater_enthalpy(pre_Tsw_out,Pv(i),Xb(i));
             Delta_H_iph(i) = Hb_Tb(i) - Hf_Tf(i);
             if Xb(i) <= Xsw
                 error(['Something is wrong with your problem formulation. Your brine salinity in the ' num2str(i) ' effect is lower than the feedwater salinity'])
@@ -243,7 +250,7 @@ while abs(Md - sum(D)) > 1e-4
         end
         
         % Distillate temperature outlet from effect(i)
-        Hv_Tv(i) = saturated_water_enthalpy(Tv(i));
+        Hv_Tv(i) = saturated_liquid_water_enthalpy(Tv(i));
         if i == 1
             Td_out(i) = Ts_sub;
         elseif i == 2
@@ -261,6 +268,8 @@ while abs(Md - sum(D)) > 1e-4
         %         Qd_flash(i) = 0;
         Tv_out(i) = Td_out(i) - Tv_Loss; %INVENTED EQUATION - certainly wrong, needs thinking
     end
+%     toc
+%     tic
     %p.202
     % Rank_Md_return = Ms + E_Ms_Tot;
     % Rank_Td_return = f(D(1);Ts_sub;Td_out(2));
@@ -275,8 +284,8 @@ while abs(Md - sum(D)) > 1e-4
     Qdc_Vapor = Qv_remain_out(n) + Qd_flash_cond;
     
     % Preheaters
-    Hf_Tf_dc_out = swenthalpy(Tf_dc_out,Pv(1),Xsw);
-    Hsw_Tsw = swenthalpy(Tsw,Pv(1),Xsw);
+    Hf_Tf_dc_out = seawater_enthalpy(Tf_dc_out,Pv(1),Xsw);
+    Hsw_Tsw = seawater_enthalpy(Tsw,Pv(1),Xsw);
     if Hf_Tf_dc_out - Hsw_Tsw == 0
         Mcw_dc_in = 0;
         Mcw_dc_out_reject = 0;
@@ -301,7 +310,7 @@ while abs(Md - sum(D)) > 1e-4
     PR = D_Total/Ms;
     
     % Heat transfer coefficients and areas
-    U(n) = 1e-3*1939.4 + 1.40562*Tb(n) - 0.0207525*Tb(n)^2 + 0.0023186*Tb(n)^3;
+    U(n) = ue(Tb(n));
     Ae = Q(n)/(U(n)*(Tv_out(n-1) - Tb(n)));
     U(1) = Q(1)/(Ae*(Ts_sub - Tb(1)));
     
@@ -309,32 +318,47 @@ while abs(Md - sum(D)) > 1e-4
         U(i) = Q(i)/(Ae*(Tv_out(i-1) - Tb(i)));
     end
     
-    Udc = 1e-3*1617.5 + 0.1537*Tv_out(n) + 0.1825*Tv_out(n)^2 - 0.00008026*Tv_out(n)^3;
+    Udc = uc(Tv_out(n));
     LMTD_dc = (Tf_dc_out - Tsw)/log((Tv_out(n) - Tsw)/(Tv_out(n) - Tf_dc_out));
     Adc = Qdc_Vapor/(Udc*LMTD_dc);
+%     toc
     disp(['Md_guess = ' num2str(Md) ' and sum(D) = ' num2str(sum(D))])
 end
 
 GOR = sum(D)/Ms % Gain Output Ratio - also called Performance Ratio (PR)
 sA = (Ae*n + Adc)/sum(D) % Specific Heat Transfer Area
 RR = sum(D)/sum(F) 
+toc
 
-%% Functions used in this program
+%% Pure Water Thermodynamic Properties
+function hw = saturated_liquid_water_enthalpy(T)
+% Appendix A.5 from El Dessouky
+% 5 < T < 200 ºC
+% hw is the Enthalpy of saturated liquid water in kJ/kg
 
-function [Tbpe] = bpe(T,X)
-% T is temperature in ºC
-% X is salt weight %
-A = 8.325e-2 +1.883e-4.*T +4.02e-6.*T.^2;
-B = -7.625e-4 +9.02e-5.*T -5.2e-7.*T.^2;
-C = 1.522e-4 -3e-6.*T -3e-8.*T.^2;
-Tbpe = A.*X + B.*X.^2+C.*X.^3;
+hw = -0.033635409 + 4.207557011*T - 6.200339e-4*T^2 + 4.459374e-6*T^3; % El Dessouky
 end
 
-function [P] = P_sat_water_vapor(T)
+function hw = saturated_water_vapor_enthalpy(T)
+% Appendix A.6 from El Dessouky
+% 0.01 < T < 200 ºC
+% hw is the enthalpy of saturated water vapor in kJ/kg
 
+hw = 2501.689845 + 1.806916015.*T + 5.087717e-4.*T.^2 -1.1221e-5.*T.^3; % El Dessouky
+end
+
+function h = latent_heat_water_evaporation(T)
+% Appendix A.7 from El Dessouky
+% 0.01 < T < 200 ºC
+% h is the latent heat of water evaporation in kJ/kg
+
+h = 2501.897149 -2.407064037*T +1.192217e-3*T^2 -1.5863e-5*T^3; % Appendix A
+end
+
+function P = P_sat_water_vapor(T)
+% Appendix A.10 from El Dessouky
 % P is pressure in kPa
-% T is temperature in ºC
-% Range between 5-200ºC with 0.05% error from steam table values
+% 5 < T < 200 ºC
 
 Pc = 22089; % kPa
 Tc = 647.286; % K
@@ -353,67 +377,130 @@ for i = 1:8
     aux = aux + f(i).*(0.01.*(T +273.15 -338.15)).^(i-1);
 end
 
-P = Pc*exp((Tc./(T+273.15)-1).*aux);
+P = Pc.*exp((Tc./(T+273.15)-1).*aux);
 end
 
-function hw = saturated_water_enthalpy(T)
-hw = 0.117603379 + 4.20689825*T - 0.000800678287*T^2 + 0.00000895478984*T^3 - 2.61832765E-08*T^4;           %[kJ/kg]
+%% Seawater Thermodynamic Properties
+function h_sw = seawater_enthalpy(T,P,X)
+% Eq 25 on Table 9 of Nayar, et. al. - https://doi.org/10.1016/j.desal.2016.02.024
+% 10 < T < 120ºC
+% 0 < P < 12000 kPa
+% 0 < X < 120000 ppm
+% h_sw is enthalpy in kJ/kg
+
+Po = P_sat_water_vapor(T); % Reference pressure in kPa
+h_w = saturated_liquid_water_enthalpy(T)*1000; % Water enthalpy at pressure P0 in J/kg
+S = X./1e3; % Salinity in g/kg
+S_weight = X./1e6; %Salinity in kg/kg
+
+b1 = -2.34825e4;
+b2 = 3.15183e5;
+b3 = 2.80269e6;
+b4 = -1.44606e7;
+b5 = 7.82607e3;
+b6 = -4.41733e1;
+b7 = 2.1394e-1;
+b8 = -1.99108e4;
+b9 = 2.77846e4;
+b10 = 9.72801e1;
+h_sw_Po = h_w - S_weight.*(b1 + b2.*S_weight + b3.*S_weight.^2 + b4.*S_weight.^3 + b5.*T + b6.*T.^2 + b7.*T.^3 + b8.*S_weight.*T + b9.*S_weight.^2.*T + b10.*S_weight.*T.^2);
+% Seawater entahlpy at pressure Po in J/kg
+
+a1 = 996.7767;
+a2 = -3.2406;
+a3 = 0.0127;
+a4 = -4.7723e-5;
+a5 = -1.1748;
+a6 = 0.01169;
+a7 = -2.6185e-5;
+a8 = 7.0661e-8;
+h_sw = 1e-3.*(h_sw_Po + 1e-3.*(P-Po).*(a1 + a2.*T + a3.*T.^2 + a4.*T.^3 + S.*(a5 + a6.*T + a7.*T.^2 + a8.*T.^3)));
+% Seawater entahlpy at pressure P in kJ/kg
 end
 
-function h = swenthalpy(T,P,xs)
+function rhow = seawater_density(T,X)
+% Appendix A.1 from El Dessouky
+% 10 < T < 180 ºC
+% 0 < X < 160000 ppm
+% rhow is the seawater density in kg/m^3
 
-Po = 100000;
-ws = xs/1000; %kg/kg
+B = (2*X/1000-150)/150;
+G1 = 0.5;
+G2 = B;
+G3 = 2*B*B - 1;
 
-% Fitting polynomials through EES for Temperatures between 5-95ºC
-% hw = 0.117603379 + 4.20689825*T - 0.000800678287*T^2 + 0.00000895478984*T^3 - 2.61832765E-08*T^4;           %[kJ/kg]
-hw = saturated_water_enthalpy(T);
-rhow = 999.95866 + 0.0426118305*T - 0.00725068716*T^2 + 0.0000385494141*T^3 - 1.19726675E-07*T^4;           %[kg/m^3]
+A1 = 4.032219*G1 + 0.115313*G2 + 3.26e-4*G3;
+A2 = -0.10819*G1 + 1.571e-3*G2 - 4.23e-4*G3;
+A3 = -0.012247*G1 + 1.74e-3*G2 -9e-6*G3;
+A4 = 6.92e-4*G1 - 8.7e-5*G2 - 3.5e-5*G3;
 
-%% CoolProp
-% CoolProp regular use is too slow
+A = (2*T-200)/110;
 
-% Tk = T + 273.153;
-% hw = CoolProp.PropsSI('H', 'P', Po, 'T', Tk,'Water')/1000;
-% rhow = CoolProp.PropsSI('D', 'P', Po, 'T', Tk, 'Water');
+F1 = 0.5;
+F2 = A;
+F3 = 2*A*A - 1;
+F4 = 4*A*A*A - 3*A;
 
-% Maybe through low-level interface it gets better
-% disp([num2str('*********** TABULAR BACKENDS *****************')]);
-% TAB = CoolProp.AbstractState.factory('TTSE&HEOS', 'Water');
-% TAB.update(CoolProp.PT_INPUTS, Po, Tk);
-% rhow = TAB.rhomass();
-% hw = TAB.hmass()/1000;
-
-%%
-b1 = -2.348*10^4;
-b2 = 3.152*10^5;
-b3 = 2.803*10^6;
-b4 = -1.446*10^7;
-b5 = 7.826*10^3;
-b6 = -4.417*10^1;
-b7 = 2.139*10^(-1);
-b8 = -1.991*10^4;
-b9 = 2.778*10^4;
-b10 = 9.728*10^1;
-a1 = 8.020*10^2;
-a2 = -2.001;
-a3 = 1.677*10^(-2);
-a4 = -3.060*10^(-5);
-a5 = -1.613*10^(-5);
-
-rhosw = rhow + ws*(a1) + (a2)*T + (a3)*T^2 + (a4)*T^3 + (a5)*T^2*ws;
-vsw = 1/rhosw;
-hswo = hw - ws*(b1 + b2*ws + b3*ws^2 + b4*ws^3 + b5*T + b6*T^2 + b7*T^3 + b8*ws*T + b9*ws^2*T + b10*ws*T^2)/1000;
-
-h = hswo + vsw*(P - Po)/1000000;
-
+rhow = 1e3*(A1*F1 + A2*F2 + A3*F3 + A4*F4);
 end
 
-function [h] = latent_heat_water_evaporation(T)
+function cp = seawater_cp(T,X)
+% Appendix A.2 from El Dessouky
+% 20 < T < 180 ºC
+% 20000 < X < 160000 ppm
+% Cp is the seawater specific heat at constant pressure in kJ/kgºC
 
-% T is temperature in ºC
-% range between 0.01-200ºc with 0.017% error from steam tables
+A = 4206.8 - 6.6197*X + 1.2288e-2*X^2;
+B = -1.1262 + 5.4178e-2*X - 2.2719e-4*X^2;
+C = 1.2026e-2 - 5.3566e-4*X + 1.8906e-6*X^2;
+D = 6.8777e-7 + 1.517e-6*X - 4.4268e-9*X^2;
 
-% h = 2501.897149 -2.407064037*T +1.192217e-3*T^2 -1.5863e-5*T^3; % Appendix A
-h = 2499.5698 - 2.204864*T - 2.304e-3*T^2; % Ch 4.2.2 - Example 1
+cp = (A + B*T + C*T^2 + D*T^3)*1E-3;
+end
+
+%% Thermodynamic Losses
+function Tbpe = bpe(T,X)
+% Appendix B.1 from El Dessouky
+% 10 < T < 180 ºC
+% 10000 < x < 160000 ppm
+
+X_weight = X/1e4; % X in weight percentage, 1 < X_weight < 16 %
+
+A = 8.325e-2 +1.883e-4.*T +4.02e-6.*T.^2;
+B = -7.625e-4 +9.02e-5.*T -5.2e-7.*T.^2;
+C = 1.522e-4 -3e-6.*T -3e-8.*T.^2;
+Tbpe = A.*X_weight + B.*X_weight.^2 + C.*X_weight.^3;
+end
+
+function Tnea = nea(deltaTb,Tv)
+% Appendix B.2 from El Dessouky
+% Tnea is the non-equilibrium allowance in MEE - Miyatake et al. (1973)
+% All temperatures are in ºC
+% deltaTb is the temperature difference of boiling brine in effects j and j-1
+% deltaTb = Tb(j-1) - Tb(j)
+% Tv is Tv(j) - Vapor temperature in effect j
+% Tv(j) = T(j) - Tbpe(j)
+
+Tnea = 33*deltaTb^0.55/Tv;
+end
+
+%% Heat Transfer Coefficients
+function u = ue(T)
+% Appendix C.6 from El Dessouky
+% Overall heat transfer coefficient for a fouled evaporator
+% Water forming a falling film on a horizontal tube bundle and vapor condensing inside the tubes
+% 2 < u < 4 kW/m^2ºC
+% T is the evaporation temperature in ºC
+
+u = 1e-3.*(1939.4 + 1.40562.*T -0.0207525.*T.^2 + 0.0023186.*T.^3);
+end
+
+function u = uc(T)
+% Appendix C.6 from El Dessouky
+% Overall heat transfer coefficient for a fouled condenser
+% Vapor condensing on the outside surface and seawater flow on the tube side
+% 2 < u < 4 kW/m^2ºC
+% T is the condensation temperature in ºC
+
+u = 1e-3.*(1617.5 + 0.1537.*T + 0.1825.*T.^2 -0.00008026.*T.^3);
 end

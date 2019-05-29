@@ -44,7 +44,7 @@ n = 6; % Number of effects
 % Flags
 CT = 7; % Cooling technology: 7-PF; 8-PF/TVC; 9-FF; 10-FF/TVC
 TVC_Strategy = 2; % 1-Lowest Compression Ratio; 2-Ts_sat is user defined; 3-Highest CR
-d_Cross_flow_flag = 1; % 0/1 - Cross flow (Parallel)
+d_Cross_flow_flag = 0; % 0/1 - Cross flow (Parallel)
 eph_flag = 0; % 0-No preheaters; 1-PH/NCG; 2-alternating PH/NCG; 3-PH; 4-alternating PH
 n_ph_NCG = 0; % Effect which NCG will start to act
 pre_PlateHTX_flag = 0; % 0/1- Plate heat exchangers of the feedwater entering the down condenser
@@ -52,11 +52,11 @@ pre_PlateHTX_flag = 0; % 0/1- Plate heat exchangers of the feedwater entering th
 % Actual inputs
 Ms = 1; % Mass flow of motive steam
 Q_Loss = 0.01; % Fraction of thermal losses in each effect
-Ts_sat = 100; % Temperature of saturated motive steam
+Ts_sat = 70; % Temperature of saturated motive steam
 Tv1 = 65; % Vapor temperature in the first effect
 Tvn = 40; % Vapor temperature in the last effect
 Tf_dc_out = 35; % Temperature of feedwater leaving the down condenser
-pre_Tsw_out = 30; % Temperature of the seawater leaving the plate HXT
+pre_Tsw_out = 0; % Temperature of the seawater leaving the plate HXT
 Tsw = 25; % Temperature of seawater
 Tv_Loss = 0.2; % Temperature losses by pressure losses (Heat transfer inside each effect is at Tv-Tv_loss)
 % Xsw = 0.042; % Salinity of seawater in weight %
@@ -67,19 +67,25 @@ Xsw = 42000; % Salinity of seawater in mg/kg
 Xb1 = Xsw + 3000; % Salinity in mg/kg to be assumed when starting iteration - Calculate mass flow rate of feedwater for the 1st effect
 Xbn_max = 72000; % Maximum allowed salinity of the last effect
 
+% Inputs added by me
+Ts_super = Ts_sat; % Actual temperature of the motive steam - can be bigger in case suerheated steam is used, needs correlation for enthalpy of superheated steam
+
 % NEEDS REVIEW - El Dessouky, 4.3.2 - last sentence
-GOR_guess = 0.98*n; % GOR is aproximately equal to the number of effects
-Md = GOR_guess*Ms; % Equation invented randomly, needs reviewing
-D = 0;
+PR_guess = 0.98*n; % GOR is aproximately equal to the number of effects
+Md = PR_guess*Ms; % Equation invented randomly, needs reviewing
+% Md = 380;
+D_Total = 0;
 tic
 %% Problem solving
-while abs(Md - sum(D)) > 1e-4
-%     tic
-    if sum(D) ~= 0
-        Md = sum(D);
+while abs(Md - D_Total) > 1e-4
+    %     tic
+    if D_Total ~= 0
+        Md = D_Total;
     end
     % Set/Reset 1st effect salinity
-    Xb(1) = Xb1;
+    if not(exist('last_Xb1','var'))
+        Xb(1) = Xb1;
+    end
     
     %% Vapor and brine temperature profile across effects
     % Set temperature and pressure profile
@@ -91,243 +97,428 @@ while abs(Md - sum(D)) > 1e-4
     Pv = P_sat_water_vapor(Tv);
     
     % Set temperature profile of the brine
-    Tbpe = bpe(Tv,Xb(1));
+    Tbpe = bpe(Tv,Xb(1)); % Salinity is assumed to be Xb(1) for all effects in order to estimate Tbpe. Error is around 0.12ºC
     Tb = Tv + Tbpe;
     
-    % ???? - Difference between Tb(i) and Tf(i) entering the effects - ????
-    Delta_Tf_iph = Tb(n) - Tf_dc_out;
-    
-    % Assume HTX temp. inside the effect to be the average
-    Delta_T_htx(2:n) = (Tb(2:n)+Tv(2:n))/2; % CHECK THIS EQUATION
-    
     % Calculate subcooled temperature of distillate collected from 1st effect
-    Delta_T_htx(1) = sum(Delta_T_htx(2:n))/(n-1);
-    Ts_sub = Tb(1) + Delta_T_htx(1);
+%     Delta_T_htx(2:n) = Tv(1:n-1) - Tb(2:n); % ASSUMED EQUATION, MIGHT BE WRONG
+%     Delta_T_htx(1) = sum(Delta_T_htx(2:n))/(n-1); % Estimate that the HTX in the 1st effect happens at the average of this value for the other effects
+%     Ts_sub = Tb(1) + Delta_T_htx(1); % Ts_sub is the temperature that the motive steam leaves the 1st effect - Considers subcooled temperature, needs correlation for enthalpy of subcooled water
     
-    %%
-    % Difference between Tb and Tf entering the effects
+    % MY CHANGE
+    Ts_sub = Ts_sat; % For use of only the latent heat
+    
+    %% If a TVC is present, call TVC subroutines
+    
+    %% Difference between Tb leaving and Tf entering the effects
     Delta_Tf_iph = Tb(n) - Tf_dc_out;
-    
-    % Power available for 1st effect
-    delta_Hs = latent_heat_water_evaporation(Ts_sat); % For saturated motive steam
-    Q(1) = Ms*(delta_Hs);
     
     %% Temperature profile of feedwater input across effects
-    Tf_eph(n) = Tf_dc_out;
+    Tf_eph(n) = Tf_dc_out; % There are no preheaters between down condenser and last effect
     
-    % There are no preheaters after the last effect
-    
-    %     if preheat_every_effect
-    %         Tf_eph(1:n-1) = Tb(1:n-1) - Delta_Tf_iph;
-    %     elseif preheat_every_2effects
-    %         % Odds
-    %         Tf_eph(i) = Tf_eph(i+1);
-    %         % Evens
-    %         Tf_eph(i) = Tb(i) - Delta_Tf_iph;
-    %     elseif no_preheaters
-    Tf_eph = Tf_dc_out;
-    %     end
+    if eph_flag == 0 % No preheaters
+        Tf_eph(1:n-1) = Tf_dc_out;
+    elseif ismember(eph_flag,[1 3]) % Preheaters every effect
+        Tf_eph(1:n-1) = Tb(1:n-1) - Delta_Tf_iph;
+        
+        if eph_flag == 1 % NCG ejectors are present
+            
+        end
+        
+    elseif ismember(eph_flag,[2 4]) % Preheaters every two effects
+        Tf_eph(logical(mod(1:n-1,2))) = Tf_eph(i+1); % Odd effects have preheaters
+        Tf_eph(not(mod(1:n-1,2))) = Tb(i) - Delta_Tf_iph; % Even effects doesn't have preheaters
+        
+        if eph_flag == 2 % NCG ejectors are present
+            
+        end
+    end
     
     % Specific enthalpies difference between feedwater passing through the preheaters
-    %     Hf_Tf_eph = enthalpy_saturated_liquid_water(Tf_eph);
-    %     Delta_H_eph = Hf_Tf_eph(1:n-1) - Hf_Tf_eph(2:n);
+    Hf_Tf_eph = seawater_enthalpy(Tf_eph,Pv(1),Xsw);
+    Delta_H_eph = Hf_Tf_eph(1:n-1) - Hf_Tf_eph(2:n);
     
-    %%
-    % Specific enthalpies difference between brine and feedwater in the 1st effect
-    Hb_Tb(1) = seawater_enthalpy(Tb(1),Pv(1),Xb(1));
-    Hf_Tf(1) = seawater_enthalpy(pre_Tsw_out,Pv(1),Xb(1));
-    Delta_H_iph(1) = Hb_Tb(1) - Hf_Tf(1);
+    %% Specific enthalpies difference between brine and feedwater in the 1st effect - not necessaty for PF
+    %     Hb_Tb(1) = seawater_enthalpy(Tb(1),Pv(1),Xb(1));
+    Hf_Tf = Hf_Tf_eph;
+    %     Delta_H_iph(1) = Hb_Tb(1) - Hf_Tf(1);
     
-    % NEEDS REVIEW
-    % Calculate mass flow rate of feedwater into the 1st effect
-    if sum(D) == 0
-        F_total = Md*Xbn_max/(Xbn_max - Xsw); % Equation invented randomly - CHECK THIS EQUATION
-    else
-        F_total = D(1)*Xb(1)/(Xb(1) - Xsw);
+    %% Calculate mass flow rate of feedwater into the 1st effect
+    % NO EQUATIONS AVAILABLE on Casimiro Thesis
+    %     Mf = Md + Mb;
+    %     Mb = Mf*Xsw/Xbn_max;
+    %     Mf = Md + Mf*Xsw/Xbn_max;
+    %     Mf*(1-Xsw/Xbn_max) = Md
+    %     Mf = Md/(1-Xsw/Xbn_max);
+    
+    if CT == 7 || CT == 8 % Low Temperature Parallel Feed || TVC Parallel Feed
+        Mf = Md*Xbn_max/(Xbn_max - Xsw/0.7); % Estimated total feedwater mass flow rate for reaching Xbn_max
+        F(1:n) = Mf/n; % Feedwater mass flow rate considered equal for each effect
+        Xf(1:n) = Xsw;
+    elseif CT == 9 || CT == 10 % Low Temperature Forward Feed || TVC Forward Feed
+        
     end
-    %     if parallel_feed
-    F(1:n) = F_total/n;
-    %     elseif forward_feed
-    %
-    %     end
     
-    %     if flashbox_present
-    % Flashing of distillate crossflowing across effects in the distillate boxes
-    %
-    %     end
+    %% If NCG steam ejectors are present, call NCG subroutine
     
-    %% Calculate effects
-%     toc
-%     tic
+    %% Calculate 1:n effects
+    %     toc
+    %     tic
     for i = 1:n
-        % Calculate Xb(i)
-        LHv_evap(i) = latent_heat_water_evaporation(Tv(i));
-        Qd_flash(i) = 0;
-        if i ~= 1
+        %% If there is cross flow of distillate between effects, calculates flashbox(i)
+        if d_Cross_flow_flag
+            
+        else
+            Qd_flash(i) = 0;
+        end
+        
+        %% Power available for effect(i)
+        if i == 1
+            %             Hs_super = superheated_water_enthalpy(Ts);
+            %             Hs_sub = subcooled_water_enthalpy(Ts_sub);
+            %             Q(1) = Ms*(Hs_super - Hs_sub);
+            
+            % MY CHANGE
+            delta_Hs = latent_heat_water_evaporation(Ts_sat);
+            Q(1) = Ms*(delta_Hs);
+        else
             Q(i) = (Qv_remain_out(i-1) + Qd_flash(i))*(1-Q_Loss);
-            Xb(i) = Xb(i-1);
+        end
+        
+        if CT == 7 || CT == 8 % Low Temperature Parallel Feed || TVC Parallel Feed
+            %% Calculate Xb(i)
+            if i ~= 1
+                Xb(i) = Xb(i-1); % Initial guess
+            end
             
             Hb_Tb(i) = seawater_enthalpy(Tb(i),Pv(i),Xb(i));
-            Hf_Tf(i) = seawater_enthalpy(pre_Tsw_out,Pv(i),Xb(i));
             Delta_H_iph(i) = Hb_Tb(i) - Hf_Tf(i);
-        end
-        
-        Q_iter = F(i)*(Delta_H_iph(i) + LHv_evap(i)*(Xb(i)-Xsw)/Xb(i)); % Heat load = (heating feed + evaporating)
-        while Q(i) > Q_iter
-            Xb(i) = Xb(i) + Xb1*0.00001;
-            if Xb(i) > Xbn_max
-                error(['Brine salinity got bigger than the maximum allowed on effect ' num2str(i)])
+            LHv_evap(i) = latent_heat_water_evaporation(Tv(i));
+            
+            D_evap(i) = F(i)*(Xb(i)-Xf(i))/Xb(i);
+            Q_iter = F(i)*Delta_H_iph(i) + D_evap(i)*LHv_evap(i); % Heat load = (heating feed + evaporating)
+            
+            while Q(i) > Q_iter % Increases Xb(i) until the power available is equal to the power necessary
+                Xb(i) = Xb(i) + Xb1*1e-5;
+                if Xb(i) > Xbn_max
+                    warning(['Brine salinity got bigger than the maximum allowed on effect ' num2str(i)])
+                end
+                Hb_Tb(i) = seawater_enthalpy(Tb(i),Pv(i),Xb(i));
+                Hf_Tf(i) = seawater_enthalpy(pre_Tsw_out,Pv(i),Xb(i));
+                Delta_H_iph(i) = Hb_Tb(i) - Hf_Tf(i);
+                Q_iter = F(i)*(Delta_H_iph(i) + LHv_evap(i)*(Xb(i)-Xsw)/Xb(i)); % Heat load = (heating feed + evaporating)
             end
-            Hb_Tb(i) = seawater_enthalpy(Tb(i),Pv(i),Xb(i));
-            Hf_Tf(i) = seawater_enthalpy(pre_Tsw_out,Pv(i),Xb(i));
-            Delta_H_iph(i) = Hb_Tb(i) - Hf_Tf(i);
-            Q_iter = F(i)*(Delta_H_iph(i) + LHv_evap(i)*(Xb(i)-Xsw)/Xb(i)); % Heat load = (heating feed + evaporating)
-        end
-        
-        while Q(i) < Q_iter
-            Xb(i) = Xb(i) - Xb1*0.00001;
-            Hb_Tb(i) = seawater_enthalpy(Tb(i),Pv(i),Xb(i));
-            Hf_Tf(i) = seawater_enthalpy(pre_Tsw_out,Pv(i),Xb(i));
-            Delta_H_iph(i) = Hb_Tb(i) - Hf_Tf(i);
-            if Xb(i) <= Xsw
-                error(['Something is wrong with your problem formulation. Your brine salinity in the ' num2str(i) ' effect is lower than the feedwater salinity'])
+            
+            while Q(i) < Q_iter
+                Xb(i) = Xb(i) - Xb1*1e-5;
+                Hb_Tb(i) = seawater_enthalpy(Tb(i),Pv(i),Xb(i));
+                Hf_Tf(i) = seawater_enthalpy(pre_Tsw_out,Pv(i),Xb(i));
+                Delta_H_iph(i) = Hb_Tb(i) - Hf_Tf(i);
+                if Xb(i) <= Xsw
+                    error(['Something is wrong with your problem formulation. Your brine salinity in the ' num2str(i) ' effect is lower than the feedwater salinity'])
+                end
+                Q_iter = F(i)*(Delta_H_iph(i) + LHv_evap(i)*(Xb(i)-Xsw)/Xb(i)); % Heat load = (heating feed + evaporating)
             end
-            Q_iter = F(i)*(Delta_H_iph(i) + LHv_evap(i)*(Xb(i)-Xsw)/Xb(i)); % Heat load = (heating feed + evaporating)
+            
+            %% Thermal load used in the external feedwater preheaters
+            % If preheater is present in effect(i)
+            if (ismember(eph_flag,[1 3]) || (ismember(eph_flag,[2 4]) && mod(i,2))) && not(i == n)
+                Q_eph(i) = sum(F(1:i))*Delta_H_eph(i);
+            else
+                Q_eph(i) = 0;
+            end
+            
+            %% Mass flow rate of vapor, brine and salt produced by evaporation in effect(i)
+            V_evap(i) = F(i)*((Xb(i)-Xf(i))/Xb(i));
+            
+            B_evap(i) = F(i) - V_evap(i);
+            
+            S(i) = B_evap(i)*Xb(i); % Mass of salt is given in mg
+            
+            %% Total mass of salt and salinity exiting effect (i)
+            if i == 1
+                S_out(1) = S(1);
+                Xb_out(1) = Xb(1);
+            else
+                S_out(i) = S(i) + S_out(i-1);
+                Xb_out(i) = S_out(i)/(B_evap(i) + B(i-1));
+            end
+            
+            %% Flashing of brine crossflowing across effects (i-1) and (i)
+            if i == 1 % No flashing of brine inside the first effect
+                V_b_flash(i) = 0;
+                B_b_flash_remain(i) = 0;
+                Hb_b_flash_remain(i) = 0;
+                Tb_b_flash = Tb(i);
+                Qv_b_flash(i) = 0;
+            else
+                % Non-Equilibrium allowance between the hotter and colder brines
+                Delta_T_b_NEA(i) = nea(Tb_out(i-1)-Tb(i),Tv(i));
+                
+                % Final temperature of the brine after flashing
+                Tb_b_flash(i) = Tb(i) + Delta_T_b_NEA(i);
+                
+                % Temperature of vapour produced by flashing
+                Tv_b_flash(i) = Tb_b_flash(i) - bpe(Tb_b_flash(i),Xb_out(i));
+                
+                % Mass flow of vapour produced inside the effect by flash of the brine
+                Hb_Tb_out(i-1) = seawater_enthalpy(Tb_out(i-1),Pv(i-1),Xb(i-1));
+                Hb_b_flash_remain(i) = seawater_enthalpy(Tb_b_flash(i),Pv(i),Xb(i));
+                LHv_b_flash(i) = latent_heat_water_evaporation(Tv_b_flash(i));
+                V_b_flash(i) = B(i-1)*(Hb_Tb_out(i-1) - Hb_b_flash_remain(i))/LHv_b_flash(i);
+                
+                % Mass flow of brine that remains after flash
+                B_b_flash_remain(i) = B(i-1) - V_b_flash(i);
+                
+                % Thermal load released from flashing
+                Qv_b_flash(i) = V_b_flash(i)*LHv_b_flash(i);
+            end
+            
+            %% Total mass flow rate of vapor and brine formed inside effect(i)
+            V(i) = V_evap(i) + V_b_flash(i);
+            B(i) = B_evap(i) + B_b_flash_remain(i);
+            
+            %% Outlet brine temperature
+            % NO IDEA WHERE THIS EQUATION CAME FROM, seems like a weighted mean
+            Tb_out(i) = (B_evap(i)*Hb_Tb(i) + B_b_flash_remain(i)*Hb_b_flash_remain(i))/((B_evap(i)*Hb_Tb(i)/Tb(i)) + (B_b_flash_remain(i)*Hb_b_flash_remain(i)/Tb_b_flash(i)));
+            
+        elseif CT == 9 || CT == 10 % Low Temperature Forward Feed || TVC Forward Feed
+            
         end
         
-        %         if feedwater_preheater
-        %
-        %         else
-        Q_eph(i) = 0;
-        %         end
-        V_evap(i) = F(i)*((Xb(i)-Xsw)/Xb(i));
-        B_evap(i) = F(i) - V_evap(i);
+        %% Separation of mass flow rate of vapor formed inside effect(i)
+        Tv_out(i) = Tv(i) - Tv_Loss;
+        LHv_Tv_out(i) = latent_heat_water_evaporation(Tv_out(i));
+        V_eph(i) = Q_eph(i)/LHv_Tv_out(i);
+        V_evap_remain(i) = V_evap(i) - V_eph(i);
         
-        S(i) = (B_evap(i)*Xb(i)*10)/1000;
-        if i == 1
-            S_out(i) = S(i);
-            Xb_out = Xb(i);
-        else
-            S_out(i) = S(i) + S_out(i-1);
-            Xb_out(i) = ((S_out(i-1) + S(i))*1000)/((B_evap(i) + B(i-1))*10);
-        end
-        
-        %         if crossflow
-        %
-        %         else
-        V_b_flash(i) = 0;
-        B_b_flash(i) = 0;
-        B_b_flash_remain(i) = 0;
-        Hb_b_flash_remain(i) = 0;
-        Qv_b_flash(i) = 0;
-        Tb_b_flash(i) = Tb(i);
-        %         end
-        
-        V(i) = V_evap(i) + V_b_flash(i);
-        B(i) = B_evap(i) + B_b_flash(i);
-        
-        % NO IDEA WHERE THIS EQUATION CAME FROM
-        Tb_out(i) = (B_evap(i)*Hb_Tb(i) + B_b_flash_remain(i)*Hb_b_flash_remain(i))/((B_evap(i)*Hb_Tb(i)/Tb(i)) + (B_b_flash_remain(i)*Hb_b_flash_remain(i)/Tb_b_flash(i)));
-        
-        %         LHv_Tv_out(i) = latent_heat_water_evaporation(Tv_out(i));
-        %         V_eph(i) = Q_eph(i)/LHv_Tv_out(i);
-        %         V_evap_remain(i) = V_evap(i) - V_eph(i);
-        V_evap_remain(i) = V_evap(i);
-        
-        % p.201
+        %% Heat load of vapor formed by evaporation inside effect(i) and amount used to power the next effect
         Qv_evap(i) = V_evap(i)*LHv_evap(i);
         Qv_evap_remain(i) = V_evap_remain(i)*LHv_evap(i);
         
-        % Crossflow of distillate mass balance
+        %% Crossflow of distillate mass balance
         if i == 1
-            D_created(i) = Ms;
-            D(i) = D_created(i);
-            D_enter_next(i) = 0;
+            D_created(1) = Ms; % Distillate produced is equal to the motive steam entering the MED
+            D(1) = D_created(1);
+            if ismember(CT,[8 10]) % If TVC is present
+                if d_Cross_flow_flag
+                    
+                else
+                    D_enter_next(1) = 0;
+                end
+            else
+                D_enter_next(1) = 0;
+            end
         else
             D_created(i) = V(i-1);
             D(i) = V(i-1) + D_enter_next(i-1);
-            D_enter_next(i) = 0;
+            
+            % If NCG steam ejectors are present some code needs to be added
+            
+            % Mass flow of distillate entering next effect
+            if d_Cross_flow_flag
+                D_enter_next(i) = D(i);
+            else
+                D_enter_next(i) = 0;
+            end
+            
         end
         
-        % Distillate temperature outlet from effect(i)
-        Hv_Tv(i) = saturated_liquid_water_enthalpy(Tv(i));
+        %% Distillate temperature outlet from effect(i)
         if i == 1
-            Td_out(i) = Ts_sub;
-        elseif i == 2
-            Td_out(i) = V(i-1)*Hv_Tv(i)/(V(i-1)*Hv_Tv(i)/Tv(i));
-            % Td_out(i) is the balance from the below different fluids, something along the lines of the below equation
-            % V(i-1); D_d_flash_remain(i); V_d_flash(i); D_d_flash_remain_Ej_s; V_d_flash_Ej_j
-            % Tb_out(i) = (B_evap(i)*Hb_Tb(i) + B_b_flash_remain(i)*Hb_b_flash_remain(i))/((B_evap(i)*Hb_Tb(i)/Tb(i)) + (B_b_flash_remain(i)*Hb_b_flash_remain(i)/Tb_b_flash(i)));
+            Td_out(1) = Ts_sub;
         else
-            Td_out(i) = V(i-1)*Hv_Tv(i)/(V(i-1)*Hv_Tv(i)/Tv(i));
-            % Same as i == 2, but less fluids
-            % V(i-1); D_d_flash_remain(i); V_d_flash(i)
+            if ismember(CT,[8 10]) % If TVC is present
+                
+            else
+                % NO IDEA WHERE THIS EQUATIONS CAME FROM, seems like a weighted mean
+                if i == 2
+                    Td_out(i) = V(i-1)*Hd_Tv_out(i-1)/(V(i-1)*Hd_Tv_out(i-1)/Tv_out(i-1));
+                    
+                    % V(i-1) is the Vapor formed inside effect (i-1);
+                    % D_d_flash_remain(i) is the distillate that remains after the crossflowing distillate suffers flashing;
+                    % V_d_flash(i) is the vapor that is produced after the crossflowing distillate suffers flashing;
+                    % D_d_flash_remain_Ej_s & V_d_flash_Ej_j are related to the NCG steam ejectors
+                else
+                    Td_out(i) = V(i-1)*Hd_Tv_out(i-1)/(V(i-1)*Hd_Tv_out(i-1)/Tv_out(i-1));
+                    % Same as i == 2, but no NCG fluids
+                    % Td_out(i) = (V(i-1)*Hd_Tv_out(i-1) + D_d_flash_remain(i)*Hd_d_flash_remain(i) + V_d_flash(i)*Hd_Tv_out(i-1))/((V(i-1)*Hd_Tv_out(i-1)/Tv_out(i-1)) + (D_d_flash_remain(i)*Hd_d_flash_remain(i)/Tv_d_flash(i)) + (V_d_flash(i)*Hd_Tv_out(i-1)/Tv_out(i-1)));
+                    
+                end
+            end
         end
         
-        Qv_remain_out(i) = Qv_evap_remain(i);
-        %         Qd_flash(i) = 0;
-        Tv_out(i) = Td_out(i) - Tv_Loss; %INVENTED EQUATION - certainly wrong, needs thinking
+        % Calculating necessary enthalpies
+        Hd_Tv_out(i) = saturated_liquid_water_enthalpy(Tv_out(i));
+        Hd_Td_out(i) = saturated_liquid_water_enthalpy(Td_out(i));
+        
+        if ismember(CT,[7 8]) % If Parallel Feed
+            Qv_remain_out(i) = (V_evap_remain(i) + V_b_flash(i))*LHv_Tv_out(i);
+            Qv(i) = Qv_evap(i) + Qv_b_flash(i);
+        else
+            Qv_remain_out(i) = (V_evap_remain(i) + V_b_flash(i) + V_f_flash(i))*LHv_Tv_out(i);
+            Qv(i) = Qv_evap(i) + Qv_b_flash(i) + Qv_f_flash(i);
+        end
     end
-%     toc
-%     tic
-    %p.202
-    % Rank_Md_return = Ms + E_Ms_Tot;
-    % Rank_Td_return = f(D(1);Ts_sub;Td_out(2));
-    Rank_Md_return = Ms;
-    Rank_Td_return = Ts_sub;
+    %     toc
+    % p.202
+    %     tic
+    %% Mass flow of condensate returning to the Rankine cycle or Boiler
+    % If NCG is not present:
+    E_Mm_Tot = 0;
     
-    D_Total = sum(D) + V(n) - Rank_Md_return;
+    Rank_Md_return = Ms + E_Mm_Tot;
     
-    % Condenser
-    Qd_flash_cond = 0;
-    Qv_remain_out(n) = Qv_remain_out(n); % - a bunch of things
-    Qdc_Vapor = Qv_remain_out(n) + Qd_flash_cond;
-    
-    % Preheaters
-    Hf_Tf_dc_out = seawater_enthalpy(Tf_dc_out,Pv(1),Xsw);
-    Hsw_Tsw = seawater_enthalpy(Tsw,Pv(1),Xsw);
-    if Hf_Tf_dc_out - Hsw_Tsw == 0
-        Mcw_dc_in = 0;
-        Mcw_dc_out_reject = 0;
+    if ismember(CT,[8 10]) % If TVC is present
+        % If NCG is present:
+        % Rank_Td_return = E_Tcw_out_2;
+        % Else
+        % Rank_Td_return = Ts_sub;
+        % End
     else
-        Mcw_dc_in = Qdc_Vapor/(Hf_Tf_dc_out - Hsw_Tsw);
-        Mcw_dc_out_reject = Mcw_dc_in - F_total;
+        Hs_Ts_sub = saturated_liquid_water_enthalpy(Ts_sub); % If Ts_sub is subcooled, change correlation
+        Rank_Td_return = (D(1)*Hd_Tv_out(1) + Ms*Hs_Ts_sub + D(2)*Hd_Td_out(2))/(D(1)*Hd_Tv_out(1)/Tv_out(1) + Ms*Hs_Ts_sub/Ts_sub + 1/Td_out(2));
     end
-    Delta_H_dc = Hf_Tf_dc_out - Hsw_Tsw;
-    Qdc_Feed = F_total*Delta_H_dc;
     
+    %% Total mass flow of Distillate produces
+    if d_Cross_flow_flag
+        D_Total = D(n) + V(n);
+    else
+        D_Total = sum(D) + V(n) - Rank_Md_return;
+    end
+    
+    %% Flashing of Distillate inside down condenser
+    % NEA between hotter distillate entering the dc and colder after flashing
+    Delta_T_d_NEA_cond = nea(Td_out(n)-Tv_out(n),Tv_out(n));
+    
+    % Temperature of vapor produced with the flashing
+    Tv_d_flash_cond = Tv_out(n) + Delta_T_d_NEA_cond;
+    
+    % Mass flow of vapor produced through flash
+    Hd_Td_out(n) = saturated_liquid_water_enthalpy(Td_out(n));
+    Hd_d_flash_remain_cond = saturated_liquid_water_enthalpy(Tv_d_flash_cond);
+    LHv_d_flash_cond = latent_heat_water_evaporation(Tv_d_flash_cond);
+    V_d_flash_cond = D(n)*(Hd_Td_out(n) - Hd_d_flash_remain_cond)/LHv_d_flash_cond;
+    
+    % Mass flow of distillate remaining
+    D_d_flash_remain_cond = D(n) - V_d_flash_cond;
+    
+    % Thermal load released from flashing
+    Qd_flash_cond = V_d_flash_cond*(LHv_d_flash_cond - Hd_Tv_out(n));
+    
+    %% Heat load actually entering the down condenser
+    if ismember(CT,[8 10]) && false % If TVC is present && some conditions
+        error('Wrong')
+    else
+        if not(ismember(CT,[8 10])) % If TVC is NOT present
+            TVC_Me_1 = 0;
+        end
+        
+        Hv_Tv = 1; % Only used when TVC is present, needs to be adressed before using
+        Hv_b_flash = 1; % Only used when TVC is present, needs to be adressed before using
+        if CT == 8 % TVC Parallel Feed
+            Qv_remain_out(n) = Qv_remain_out(n) - (Hv_Tv(n)*TVC_Me_1*V_evap(n)/(V_evap(n) + V_b_flash(n))) - (Hv_b_flash(n)*TVC_Me_1*V_b_flash(n)/(V_evap(n) + V_b_flash(n)));
+        elseif CT == 10 % TVC Forward Feed
+            Qv_remain_out(n) = Qv_remain_out(n) - Hv_Tv(n)*TVC_Me_1;
+        end
+        
+        E_Me_Vap_1 = 0; % If NCG is not present
+        Qdc_Vapor = Qv_remain_out(n) + Qd_flash_cond - E_Me_Vap_1;
+    end
+    
+    %p.203
+    %% Flat Plate cooling water preheaters
+    if pre_PlateHTX_flag % If Plate Heat Exchangers installed
+        
+    else
+        Hf_Tf_dc_out = seawater_enthalpy(Tf_dc_out,Pv(1),Xsw);
+        Hsw_Tsw = seawater_enthalpy(Tsw,Pv(1),Xsw);
+        if Hf_Tf_dc_out - Hsw_Tsw == 0
+            Mcw_dc_in = 0;
+            Mcw_dc_out_reject = 0;
+        else
+            Mcw_dc_in = Qdc_Vapor/(Hf_Tf_dc_out - Hsw_Tsw);
+            Mcw_dc_out_reject = Mcw_dc_in - Mf;
+        end
+        Delta_H_dc = Hf_Tf_dc_out - Hsw_Tsw;
+        Qdc_Feed = Mf*Delta_H_dc;
+    end
+    
+    % Difference and ratio between thermal load passed into the feedwater
+    % and released by the vapor entering and formed at the down condenser
     Delta_Qdc = Qdc_Vapor - Qdc_Feed;
     Ratio_Qdc = Qdc_Vapor/Qdc_Feed;
     
-    % Check condenser operational boundaries
+    %% Check down condenser operational boundaries
+    %% If heatload is too low
     if Ratio_Qdc < 1.08
-        error(['Condensator ratio of heat is too low (' num2str(Ratio_Qdc) ')'])
-    end
-    if Ratio_Qdc > 2.5
-        warning(['Condensator ratio of heat is too high (' num2str(Ratio_Qdc) ')'])
+        if CT == 7 || CT == 8 % Low Temperature Parallel Feed || TVC Parallel Feed
+            error(['Condensator ratio of heat is too low (' num2str(Ratio_Qdc) ')'])
+        elseif CT == 9 || CT == 10 % Low Temperature Forward Feed || TVC Forward Feed
+            if Xb_out(n) <= Xbn_max
+                if exist('last_Xb1','var') && Xb(1) == last_Xb1
+                    warning('Maybe the change in Xb(1) implemented is wrong, check it')
+                    error(['Condensator ratio of heat is too low (' num2str(Ratio_Qdc) ') and changing the brine salinity does not solves the problem'])
+                elseif Delta_Tf_iph > Tv(1) - Tv(n)
+                    error(['Condensator ratio of heat is too low (' num2str(Ratio_Qdc) ') and Delta_Tf_iph > Tv(1) - Tv(n)'])
+                end
+                last_Xb1 = Xb(1);
+                Xb(1) = Xb1*1.01;
+                continue
+            else
+                error(['Condensator ratio of heat is too low (' num2str(Ratio_Qdc) ') and Brine is already over maximum salinity'])
+            end
+        end
     end
     
+    %% If heatload is too high
+    if ismember(CT,[8 10])
+        if Ratio_Qdc > 1.18
+            warning(['Condensator ratio of heat is too high (' num2str(Ratio_Qdc) ')'])
+        end
+    else
+        if Ratio_Qdc > 2.5
+            if ismember(CT,[9 10]) && (Xb_out(n) <= Xb_out(n-1) || Xb_out(n) >= Xbn_max || Xb_out(n) <= Xf(1))
+                if exist('last_Xb1','var') && Xb(1) == last_Xb1
+                    warning('Maybe the change in Xb(1) implemented is wrong, check it')
+                    error(['Condensator ratio of heat is too low (' num2str(Ratio_Qdc) ') and changing the brine salinity does not solves the problem'])
+                end
+                last_Xb1 = Xb(1);
+                Xb(1) = Xb1*0.99;
+                continue
+            else
+                warning(['Condensator ratio of heat is too high (' num2str(Ratio_Qdc) ')'])
+            end
+        end
+    end
+    
+    %% Performance Ratio (PR)-  also called Gain Output Ratio (GOR)
     PR = D_Total/Ms;
     
-    % Heat transfer coefficients and areas
+    %% Heat transfer coefficients and areas of effects
     U(n) = ue(Tb(n));
     Ae = Q(n)/(U(n)*(Tv_out(n-1) - Tb(n)));
-    U(1) = Q(1)/(Ae*(Ts_sub - Tb(1)));
+    U(1) = Q(1)/(Ae*((Ts_super + Ts_sub)/2 - Tb(1)));
     
     for i = 2:n-1
         U(i) = Q(i)/(Ae*(Tv_out(i-1) - Tb(i)));
     end
     
+    %% Heat transfer coefficient and area of down condenser
     Udc = uc(Tv_out(n));
-    LMTD_dc = (Tf_dc_out - Tsw)/log((Tv_out(n) - Tsw)/(Tv_out(n) - Tf_dc_out));
+    if pre_PlateHTX_flag
+        LMTD_dc = (Tf_dc_out - pre_Tsw_out)/log((Tv_out(n) - pre_Tsw_out)/(Tv_out(n) - Tf_dc_out));
+    else
+        LMTD_dc = (Tf_dc_out - Tsw)/log((Tv_out(n) - Tsw)/(Tv_out(n) - Tf_dc_out));
+    end
     Adc = Qdc_Vapor/(Udc*LMTD_dc);
-%     toc
-    disp(['Md_guess = ' num2str(Md) ' and sum(D) = ' num2str(sum(D))])
+    %     toc
+    disp(['Md_guess = ' num2str(Md) ' and D_Total = ' num2str(D_Total)])
 end
 
-GOR = sum(D)/Ms % Gain Output Ratio - also called Performance Ratio (PR)
-sA = (Ae*n + Adc)/sum(D) % Specific Heat Transfer Area
-RR = sum(D)/sum(F) 
+PR = D_Total/Ms % Gain Output Ratio - also called Performance Ratio (PR)
+sA = (Ae*n + Adc)/D_Total % Specific Heat Transfer Area
+RR = D_Total/Mf
 toc
 
 %% Pure Water Thermodynamic Properties
@@ -336,7 +527,7 @@ function hw = saturated_liquid_water_enthalpy(T)
 % 5 < T < 200 ºC
 % hw is the Enthalpy of saturated liquid water in kJ/kg
 
-hw = -0.033635409 + 4.207557011*T - 6.200339e-4*T^2 + 4.459374e-6*T^3; % El Dessouky
+hw = -0.033635409 + 4.207557011*T - 6.200339e-4*T.^2 + 4.459374e-6*T.^3; % El Dessouky
 end
 
 function hw = saturated_water_vapor_enthalpy(T)
@@ -388,8 +579,12 @@ function h_sw = seawater_enthalpy(T,P,X)
 % 0 < X < 120000 ppm
 % h_sw is enthalpy in kJ/kg
 
-Po = P_sat_water_vapor(T); % Reference pressure in kPa
-h_w = saturated_liquid_water_enthalpy(T)*1000; % Water enthalpy at pressure P0 in J/kg
+% Following commented code improves results a little, but slows down the program
+% Po = P_sat_water_vapor(T); % Reference pressure in kPa
+% h_w = saturated_liquid_water_enthalpy(T)*1000; % Water enthalpy at pressure P0 in J/kg
+
+Po = 101; % Reference pressure in kPa
+h_w = 141.355 + 4202.07*T -0.535*T.*T + 0.004*T.*T.*T; % Water enthalpy at pressure P0 in J/kg
 S = X./1e3; % Salinity in g/kg
 S_weight = X./1e6; %Salinity in kg/kg
 
